@@ -1,0 +1,283 @@
+"""
+1.  Не используя библиотеки для парсинга, распарсить (получить определённые данные) файл логов web-сервера nginx_logs.txt
+    (https://github.com/elastic/examples/raw/master/Common%20Data%20Formats/nginx_logs/nginx_logs) — получить 
+    список кортежей вида: (<remote_addr>, <request_type>, <requested_resource>). Например:
+    [
+        ...
+        ('141.138.90.60', 'GET', '/downloads/product_2'),
+        ('141.138.90.60', 'GET', '/downloads/product_2'),
+        ('173.255.199.22', 'GET', '/downloads/product_2'),
+        ...
+    ]
+
+    Примечание: код должен работать даже с файлами, размер которых превышает объем ОЗУ компьютера.
+2.  *(вместо 1) Найти IP адрес спамера и количество отправленных им запросов по данным файла логов из предыдущего задания.
+    Примечания: спамер — это клиент, отправивший больше всех запросов; код должен работать даже с файлами, размер которых превышает объем ОЗУ компьютера.
+"""
+from requests import get
+
+
+# качать файл не просили, но я решил добавить
+def save_log(url, file_name):
+    """ сохраняет контент url в file_name. Пишет байты. Читает по 10мб
+    """
+    response = get(url, stream=True)
+    if response.status_code == 200:
+        with open(file_name, 'bw') as f:
+            # для текста это рекомендуемый (разрабами request) способ. Есть еще Response.raw - это прям когда байты 1в1
+            # но вообще, насколько я понял, для потоковой скачки (если точнее сохранения на диск) лучше пользовать модуль IO
+            for chunk in response.iter_content(chunk_size=10 * 1024 * 1024):  # думаю 10мб найдется у всех =) всякие ардуино не в счет
+                f.write(chunk)
+
+
+def parse_log(file_name, req_counters):
+    """возвращает список кортежей вида: (<remote_addr>, <request_type>, <requested_resource>). Например:
+        [
+            ...
+            ('141.138.90.60', 'GET', '/downloads/product_2'),
+            ('141.138.90.60', 'GET', '/downloads/product_2'),
+            ('173.255.199.22', 'GET', '/downloads/product_2'),
+            ...
+        ]
+    и словарь с подсчетом вызовов от каждого IP:
+        {
+            ...
+            '1.2.3.4': 9000
+            ...
+        }
+    """
+    parsed_data = []
+    with open(file_name) as f:
+        for line in f:
+            # 80.70.214.71 - - [17/May/2015:09:05:20 +0000] "HEAD /downloads/product_1 HTTP/1.1" 200 0 "-" "Wget/1.13.4 (linux-gnu)"
+            first_quote = line.find('"') + 1
+            parsed_data.append((line[:line.find(' ')], *line[first_quote:line.find('"', first_quote)].split()[:2]))  # ip, req_type, req_resource
+            req_counters.setdefault(parsed_data[-1][0], 0)
+            req_counters[parsed_data[-1][0]] += 1
+    return parsed_data
+
+
+if __name__ == '__main__':
+    log_name = 'nginx_logs.txt'
+    request_counters = dict()
+    if False:
+        save_log('https://github.com/elastic/examples/raw/master/Common%20Data%20Formats/nginx_logs/nginx_logs', log_name)
+
+    parse_log(log_name, request_counters)
+
+    # такое сработает, если максимальное значение только одно
+    max_req_key = max(request_counters, key=request_counters.get)
+    print(f'{max_req_key}: {request_counters[max_req_key]}')
+
+    # более универсальный вариант
+    max_req_value = max(request_counters.values())
+    print([f'{k}: {v}' for k, v in request_counters.items() if v == max_req_value])
+
+"""
+3.  Есть два файла: в одном хранятся ФИО пользователей сайта, а в другом  — данные об их хобби.
+    Известно, что при хранении данных используется принцип: одна строка — один пользователь, разделитель между значениями — запятая.
+    Написать код, загружающий данные из обоих файлов и формирующий из них словарь: ключи — ФИО, значения — данные о хобби.
+    Сохранить словарь в файл. Проверить сохранённые данные.
+    Если в файле, хранящем данные о хобби, меньше записей, чем в файле с ФИО, задаём в словаре значение None.
+    Если наоборот — выходим из скрипта с кодом «1».
+    При решении задачи считать, что объём данных в файлах во много раз меньше объема ОЗУ.
+    Фрагмент файла с данными о пользователях (users.csv):
+    Иванов,Иван,Иванович
+    Петров,Петр,Петрович
+    Фрагмент файла с данными о хобби  (hobby.csv):
+    скалолазание,охота
+    горные лыжи
+"""
+from itertools import zip_longest
+from json import dump, load
+from sys import exit
+
+
+def task_3():
+    with open('users.csv', encoding='utf8') as fu, open('hobby.csv', encoding='utf8') as fh, open('dict.json', 'w', encoding='utf8') as fd:
+        user_lines, hobby_lines = fu.readlines(), fh.readlines()
+        if len(hobby_lines) > len(user_lines):
+            # вместо импорта я бы сделал raise SystemExit, но раз мы исключения еще не трогали..
+            return 1
+        user_hobby_dict = {' '.join(k.strip().split(',')): v.strip().split(',') if v else None for k, v in zip_longest(user_lines, hobby_lines)}
+        dump(user_hobby_dict, fd, ensure_ascii=False)
+    # проверяем корректность
+    with open('dict.json', encoding='utf8') as fd:
+        check_dict = load(fd)
+        print(check_dict)
+    return 0
+
+
+if __name__ == '__main__':
+    exit(task_3())
+
+"""
+4.  *(вместо 3) Решить задачу 3 для ситуации, когда объём данных в файлах превышает объём ОЗУ (разумеется, не нужно реально создавать такие большие файлы, это просто задел на будущее проекта).
+    Только теперь не нужно создавать словарь с данными. Вместо этого нужно сохранить объединенные данные в новый файл (users_hobby.txt).
+    Хобби пишем через двоеточие и пробел после ФИО:
+    Иванов,Иван,Иванович: скалолазание,охота
+    Петров,Петр,Петрович: горные лыжи
+"""
+from sys import exit
+
+
+def task_4():
+    with open('users.csv', encoding='utf8') as fu, open('hobby.csv', encoding='utf8') as fh, open('users_hobby.txt', 'w', encoding='utf8') as fd:
+        for user_line in fu:
+            hobby_line = fh.readline().strip()  # strip для контроля за \n
+            fd.write(f'{user_line.strip()}: {hobby_line if hobby_line else None}\n')
+        if fh.readline():
+            return 1
+    return 0
+
+
+if __name__ == '__main__':
+    exit(task_4())
+
+
+"""
+5.  **(вместо 4) Решить задачу 4 и реализовать интерфейс командной строки, чтобы можно было задать имя обоих исходных файлов и имя выходного файла.
+    Проверить работу скрипта.
+"""
+from sys import exit, argv
+
+
+def task_5(*args):
+    if len(args) != 4:
+        print('Необходимо указать 3 параметра: файл пользователей, файл хобби, выходной файл')
+        return 1
+    with open(args[1], encoding='utf8') as fu, open(args[2], encoding='utf8') as fh, open(args[3], 'w', encoding='utf8') as fd:
+        for user_line in fu:
+            hobby_line = fh.readline().strip()  # strip для контроля за \n
+            fd.write(f'{user_line.strip()}: {hobby_line if hobby_line else None}\n')
+        if fh.readline():
+            return 1
+    return 0
+
+
+if __name__ == '__main__':
+    exit(task_5(*argv))
+
+"""
+6.  Реализовать простую систему хранения данных о суммах продаж булочной. Должно быть два скрипта с интерфейсом командной строки: для записи данных и для вывода на экран записанных данных.
+    При записи передавать из командной строки значение суммы продаж. Для чтения данных реализовать в командной строке следующую логику:
+    просто запуск скрипта — выводить все записи;
+    запуск скрипта с одним параметром-числом — выводить все записи с номера, равного этому числу, до конца;
+    запуск скрипта с двумя числами — выводить записи, начиная с номера, равного первому числу, по номер, равный второму числу, включительно.
+    Подумать, как избежать чтения всего файла при реализации второго и третьего случаев.
+    Данные хранить в файле bakery.csv в кодировке utf-8. Нумерация записей начинается с 1.
+    Примеры запуска скриптов:
+        python add_sale.py 5978,5
+        python add_sale.py 8914,3
+        python add_sale.py 7879,1
+        python add_sale.py 1573,7
+        python show_sales.py
+        5978,5
+        8914,3
+        7879,1
+        1573,7
+        python show_sales.py 3
+        7879,1
+        1573,7
+        python show_sales.py 1 3
+        5978,5
+        8914,3
+        7879,1
+"""
+
+from sys import argv, exit
+
+
+def write_data(*args):
+    if len(args) != 2:
+        print('Неверно указана сумма.')
+        return 1
+    with open('bakery.csv', 'a', encoding='utf8') as f:
+        s = f'\n{args[1]}' if f.tell() != 0 else args[1]  # если файл новый - пишем без \n
+        f.write(s)
+    return 0
+
+
+if __name__ == '__main__':
+    exit(write_data(*argv))
+
+"""
+7  *(вместо 6) Добавить возможность редактирования данных при помощи отдельного скрипта: передаём ему номер записи и новое значение.
+    При этом файл не должен читаться целиком — обязательное требование.
+    Предусмотреть ситуацию, когда пользователь вводит номер записи, которой не существует.
+"""
+from sys import argv, exit
+from os import linesep
+
+
+def rewrite_data(file, old_data, new_data, start_cursor):
+    chunk_len = 10
+    is_end_line = False if bytes(linesep, 'utf8') in old_data else True  # если в найденной линии нет переноса строки - это конец файла
+    new_data = bytes((new_data + linesep) if not is_end_line else new_data, 'utf8')
+    data_len_diff = len(new_data) - len(old_data)
+    file.seek(start_cursor)
+    chunk = file.read(chunk_len)
+    file.seek(start_cursor)
+    if data_len_diff > 0:  # если замена больше старых данных
+        tmp_data = chunk[-data_len_diff:]  # сохраняем лишние (вылезают за chunk_len) данные
+        chunk = chunk[:chunk_len - data_len_diff]  # обрезаем их
+        file.write(chunk.replace(old_data, new_data, 1))  # меняем инфу
+        while True:
+            cur_cursor = file.tell()
+            chunk = file.read(chunk_len)
+            if not chunk:
+                break
+            chunk = tmp_data + chunk  # добавляем данные от прошлого chunk
+            tmp_data = chunk[-data_len_diff:]  # сохраняем новые лишние
+            file.seek(cur_cursor)
+            file.write(chunk[:chunk_len] if len(chunk) > chunk_len else chunk)  # обрезаем лишнее и записываем
+    elif data_len_diff < 0:  # если замена меньше старых данных
+        file.write(chunk.replace(old_data, new_data, 1))  # меняем инфу + записываем
+        if is_end_line:
+            file.truncate()  # если мы пишем в конец файла - сразу обрезаем остатки
+        else:
+            file.seek(-data_len_diff, 1)  # сдвигаем курсор вперед, чтобы он был в ровень с длиной чанка
+            while True:
+                cur_cursor = file.tell()
+                chunk = file.read(chunk_len)  #
+                if not chunk:
+                    # тут мы можем попасть в ситуацию, когда после вставки мы окажемся прямо в конце файла
+                    file.seek(file.tell() + data_len_diff)  # поэтому сдвигаем курсор назад
+                    file.truncate()  # и обрезаем файл
+                    break
+                next_cursor = file.tell()  # сохраняем позицию начала след. чанка
+                file.seek(cur_cursor + data_len_diff)  # просто сдвигаем текущий чанк на разницу при замене данных
+                file.write(chunk)
+                if len(chunk) < chunk_len:
+                    file.truncate()  # обрезаем файл
+                file.seek(next_cursor)  # и идем к следующему, который так же сдвинем.
+    else:  # если новая инфа по длинне такая же как и старая
+        file.write(chunk.replace(old_data, new_data, 1))  # меняем инфу
+
+
+def edit_data(*args):
+    if len(args) != 3:
+        print('Указано неверное количество параметров.')
+        return 1
+    line_to_change = int(args[1]) - 1
+    if line_to_change < 0:
+        print('Номер строки должен быть >= 1')
+        return 1
+    with open('bakery.csv', 'br+') as f:
+        # f.tell() не работает в итерациях, поэтому так
+        line_idx = 0
+        while True:
+            cursor_to_start_cur_line = f.tell()
+            cur_line = f.readline()
+            if not cur_line:
+                break
+            if line_idx == line_to_change:
+                return rewrite_data(f, cur_line, args[2], cursor_to_start_cur_line)
+            line_idx += 1
+
+    print(f'Указанной строки ({args[1]}) не найдено в файле.')
+    return 1
+
+
+if __name__ == '__main__':
+    exit(edit_data(*argv))
